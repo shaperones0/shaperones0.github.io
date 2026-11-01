@@ -1,5 +1,6 @@
 // Hosts one interpreter for one program, then gets thrown away. See run.ts for the page side.
 import type { PyodideAPI } from "pyodide";
+import type { PyProxy } from "pyodide/ffi";
 import {
   CTRL,
   FRAME_HEADER,
@@ -18,8 +19,13 @@ import {
 const WORKSPACE = "/workspace";
 
 const DRIVER = `
-import os, sys, time, traceback, types
+import builtins, importlib, io, os, shutil, sys, time, traceback, types
 import _ide
+
+_default_recursion_limit = sys.getrecursionlimit()
+_base_path = list(sys.path)
+_original_builtins = dict(vars(builtins))
+_base_modules = set(sys.modules)
 
 time.sleep = _ide.sleep
 
@@ -30,6 +36,26 @@ def _error_line(tb, entry):
             line = tb.tb_lineno
         tb = tb.tb_next
     return line
+
+# Undoes what an earlier program in this interpreter may have changed. Installed packages stay
+# imported, because numpy can't be imported twice.
+def _reset():
+    os.chdir("/")
+    for name, module in list(sys.modules.items()):
+        if name not in _base_modules and not str(getattr(module, "__file__", "") or "").startswith("/lib"):
+            del sys.modules[name]
+    importlib.invalidate_caches()
+    shutil.rmtree("${WORKSPACE}", ignore_errors=True)
+    sys.setrecursionlimit(_default_recursion_limit)
+    sys.path[:] = _base_path
+    sys.argv[:] = [""]
+    time.sleep = _ide.sleep
+    namespace = vars(builtins)
+    namespace.clear()
+    namespace.update(_original_builtins)
+    sys.stdout, sys.stderr = sys.__stdout__, sys.__stderr__
+    # A new reader, so input a previous program left unread can't reach this one.
+    sys.stdin = sys.__stdin__ = io.TextIOWrapper(io.BufferedReader(io.FileIO(0, closefd=False)), encoding="utf-8")
 
 def _run(entry):
     sys.stdout.reconfigure(line_buffering=True)
@@ -70,11 +96,14 @@ def _run(entry):
 
 const send = (event: WorkerEvent) => postMessage(event);
 
+type PyProxyDict = PyProxy & { get(name: string): (...args: unknown[]) => PyProxy & { toJs(): unknown } };
+
 let pyodide: PyodideAPI;
 let ctrl: Int32Array<SharedArrayBuffer>;
 let ringBytes: Uint8Array<SharedArrayBuffer>;
 let stdinBytes: Uint8Array<SharedArrayBuffer>;
 let bootPromise: Promise<void>;
+let driver: PyProxyDict;
 
 // The build allows a 4 GB heap, and a phone's OS kills the tab long before that. Emscripten
 // treats a failed grow as out of memory, so going over the limit becomes a MemoryError.
@@ -149,10 +178,24 @@ async function boot() {
   pyodide.setStdout({ write: (bytes) => (writeFrame(STREAM_STDOUT, bytes), bytes.length), isatty: false });
   pyodide.setStderr({ write: (bytes) => (writeFrame(STREAM_STDERR, bytes), bytes.length), isatty: false });
   pyodide.registerJsModule("_ide", { sleep });
+  driver = pyodide.toPy({});
+  pyodide.runPython(DRIVER, { globals: driver });
   send({ type: "ready", bootMs: performance.now() - started });
 }
 
-async function runProgram({ entry, files, stdin }: ProgramRequest) {
+function readCollected(names: string[]) {
+  const files: Record<string, string | null> = {};
+  for (const name of names) {
+    try {
+      files[name] = pyodide.FS.readFile(`${WORKSPACE}/${name}`, { encoding: "utf8" });
+    } catch {
+      files[name] = null;
+    }
+  }
+  return files;
+}
+
+async function runProgram({ entry, files, stdin, collect = [] }: ProgramRequest) {
   await bootPromise;
   if (stdin) pyodide.setStdin({ read: preloadedReader(stdin), isatty: false });
   else pyodide.setStdin({ stdin: readInteractiveLine, isatty: true });
@@ -162,18 +205,17 @@ async function runProgram({ entry, files, stdin }: ProgramRequest) {
     .loadPackagesFromImports(Object.values(files).join("\n"), { messageCallback: () => {}, errorCallback: () => {} })
     .catch(() => {});
 
+  const run = driver.get("_run");
+  driver.get("_reset")();
   pyodide.FS.mkdirTree(WORKSPACE);
   for (const [name, text] of Object.entries(files)) {
     pyodide.FS.writeFile(`${WORKSPACE}/${name}`, text, { encoding: "utf8" });
   }
   send({ type: "started" });
 
-  const globals = pyodide.toPy({});
-  pyodide.runPython(DRIVER, { globals });
-  const run = globals.get("_run");
   try {
     const [status, stopped, errorLine] = run(entry).toJs() as [number, boolean, number | null];
-    send({ type: "done", status, stopped, errorLine: errorLine ?? null });
+    send({ type: "done", status, stopped, errorLine: errorLine ?? null, files: readCollected(collect) });
   } catch (error) {
     // Stop retries its interrupt, and the retry can land while the driver handles the first.
     if (!String(error).includes("KeyboardInterrupt")) throw error;

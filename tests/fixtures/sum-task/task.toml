@@ -1,0 +1,23 @@
+id = "sum-task"
+version = 1
+name = "summa"
+time_limit = 2
+
+[title]
+ru = "Сумма двух чисел"
+en = "Sum of two numbers"
+
+[[group]]
+name = "samples"
+display = "collapsed"
+protection = "obfuscated"
+
+[[group]]
+name = "shown"
+display = "on-fail"
+protection = "obfuscated"
+
+[[group]]
+name = "secret"
+display = "hidden"
+protection = "hashed"

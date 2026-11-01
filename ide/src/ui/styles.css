@@ -167,7 +167,9 @@ button.primary.stop {
 }
 
 .file-name {
-  border-color: transparent;
+  display: inline-block;
+  line-height: 24px;
+  border: 1px solid transparent;
   background: transparent;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -181,7 +183,7 @@ button.primary.stop {
 }
 
 .toolbar-status {
-  flex: 1;
+  flex: 1 1 0;
   min-width: 0;
   color: var(--muted);
   font-size: 13px;
@@ -196,12 +198,18 @@ button.primary.stop {
   flex: none;
 }
 
+.check-button {
+  white-space: nowrap;
+  font-weight: 600;
+}
+
 .menu {
   position: relative;
   flex: none;
 }
 
-.menu > button {
+.menu-button {
+  flex: none;
   min-width: 40px;
   font-size: 18px;
   line-height: 1;
@@ -260,21 +268,458 @@ button.primary.stop {
   border-bottom-color: var(--accent);
 }
 
-.workspace {
+.layout {
   flex: 1;
   min-height: 0;
-  width: 100%;
-  max-width: 980px;
-  margin: 0 auto;
   display: flex;
-  flex-direction: column;
   background: var(--surface);
 }
 
+.layout-centered {
+  width: 100%;
+  max-width: 980px;
+  margin: 0 auto;
+}
+
 @media (min-width: 800px) {
-  .workspace {
+  .layout-centered {
     border-inline: 1px solid var(--line);
   }
+}
+
+.code-column {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.statement-pane {
+  position: relative;
+  flex: 0 1 45%;
+  min-width: 0;
+  overflow-y: auto;
+  background: var(--bg);
+}
+
+.app:has(.view-tabs) .statement-pane {
+  flex: 1;
+}
+
+.column-splitter {
+  flex: none;
+  width: 7px;
+  cursor: col-resize;
+  touch-action: none;
+  background: var(--surface-2);
+  border-inline: 1px solid var(--line);
+}
+
+.pane-close {
+  position: absolute;
+  z-index: 1;
+  top: 8px;
+  right: 8px;
+  min-height: 26px;
+  width: 26px;
+  padding: 0;
+  line-height: 1;
+}
+
+/* Prose can't be selected, to add a little friction to copying it elsewhere. Code stays selectable. */
+.statement {
+  padding: 16px 20px 32px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.statement h1 {
+  margin: 0 28px 12px 0;
+  font-size: 1.35rem;
+  line-height: 1.25;
+}
+
+.statement h2,
+.statement h3 {
+  margin: 1.2em 0 0.4em;
+  font-size: 1.05rem;
+}
+
+.statement p {
+  margin: 0.6em 0;
+}
+
+.statement img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0.8em 0;
+  pointer-events: none;
+}
+
+.statement code,
+.statement pre {
+  font-family: var(--mono);
+  font-size: 0.92em;
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-touch-callout: default;
+}
+
+.statement :not(pre) > code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--surface-2);
+}
+
+.statement pre {
+  margin: 0.6em 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.statement table {
+  border-collapse: collapse;
+}
+
+.statement th,
+.statement td {
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+}
+
+.example {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 0.6em 0;
+}
+
+.example pre {
+  margin: 0;
+  min-height: 2.2em;
+}
+
+.example-label {
+  color: var(--muted);
+  font-size: 13px;
+  margin-bottom: 2px;
+}
+
+.test-group summary {
+  cursor: pointer;
+  margin: 0.8em 0 0.4em;
+}
+
+.workspace-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  padding: 4px 12px 0;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line);
+  flex: none;
+  overflow: visible;
+}
+
+.workspace-tab {
+  display: flex;
+  align-items: center;
+  max-width: 260px;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  border-radius: 6px 6px 0 0;
+}
+
+.workspace-tab[data-active="true"] {
+  background: var(--surface);
+  border-color: var(--line);
+}
+
+.workspace-tab button {
+  border: 0;
+  background: transparent;
+  min-height: 30px;
+  padding: 3px 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-tab .tab-close {
+  flex: none;
+  padding: 0 6px;
+  color: var(--muted);
+}
+
+.recent-menu {
+  position: relative;
+  margin-left: auto;
+  align-self: center;
+}
+
+.recent-menu summary {
+  cursor: pointer;
+  padding: 3px 8px;
+  color: var(--muted);
+}
+
+.recent-popup {
+  position: absolute;
+  z-index: 10;
+  right: 0;
+  top: calc(100% + 4px);
+  min-width: 280px;
+  padding: 6px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 6px 24px #0004;
+}
+
+.recent-list,
+.curtain-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.recent-list li,
+.curtain-list li {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.recent-open,
+.curtain-item {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  border-color: transparent;
+  background: transparent;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent-delete {
+  flex: none;
+  width: 36px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+}
+
+.curtain-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  background: #0006;
+}
+
+.curtain {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: min(320px, 85vw);
+  overflow-y: auto;
+  padding: 12px;
+  background: var(--surface);
+  border-right: 1px solid var(--line);
+}
+
+.curtain h2 {
+  margin: 16px 8px 6px;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.curtain-list li[data-active="true"] {
+  background: var(--surface-2);
+  border-radius: 6px;
+}
+
+.curtain-item {
+  min-height: 44px;
+}
+
+.dialog-backdrop {
+  display: grid;
+  place-items: center;
+  padding: 16px;
+}
+
+.dialog {
+  width: min(440px, 100%);
+  padding: 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 10px 40px #0005;
+}
+
+.dialog h2 {
+  margin: 0 0 10px;
+  font-size: 1.1rem;
+}
+
+.dialog label {
+  display: block;
+}
+
+.dialog input {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 8px;
+  font: 16px var(--mono);
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.dialog-error {
+  margin: 8px 0 0;
+  color: var(--stderr);
+}
+
+.dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.dialog-spacer {
+  flex: 1;
+}
+
+.drop-overlay {
+  position: absolute;
+  inset: 8px;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  font-size: 1.3rem;
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  border: 3px dashed var(--accent);
+  border-radius: 12px;
+  pointer-events: none;
+}
+
+.pane-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: none;
+  padding: 2px 8px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line);
+}
+
+.pane-title {
+  padding: 3px 4px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.pane-tabs {
+  display: flex;
+}
+
+.pane-tabs button {
+  min-height: 26px;
+  padding: 2px 10px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.pane-tabs button[aria-selected="true"] {
+  color: var(--text);
+  font-weight: 600;
+  background: var(--surface);
+}
+
+.pane-close-inline {
+  min-height: 24px;
+  width: 24px;
+  padding: 0;
+  line-height: 1;
+  border-color: transparent;
+  background: transparent;
+}
+
+.check-results {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px 12px;
+}
+
+.check-results.empty {
+  color: var(--muted);
+}
+
+.check-summary {
+  margin: 0 0 8px;
+  font-weight: 600;
+}
+
+.check-summary.all-passed {
+  color: var(--input);
+}
+
+.results {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.result {
+  padding: 3px 0;
+}
+
+.result summary {
+  cursor: pointer;
+}
+
+.mark-pass {
+  color: var(--input);
+  font-weight: 700;
+}
+
+.mark-fail {
+  color: var(--stderr);
+  font-weight: 700;
+}
+
+.result-detail {
+  margin: 6px 0 6px 18px;
+}
+
+.result-detail pre {
+  margin: 0;
+  max-height: 200px;
+  overflow: auto;
+  padding: 6px 8px;
+  font: 13px/1.4 var(--mono);
+  background: var(--surface-2);
+  border-radius: 6px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .pane {
@@ -368,9 +813,9 @@ button.primary.stop {
 }
 
 .console-pane {
-  position: relative;
   flex: none;
   display: flex;
+  flex-direction: column;
   max-height: calc(100% - 80px);
 }
 
@@ -379,20 +824,10 @@ button.primary.stop {
   max-height: none;
 }
 
-.console-close {
-  position: absolute;
-  z-index: 1;
-  top: 4px;
-  right: 14px;
-  min-height: 26px;
-  width: 26px;
-  padding: 0;
-  line-height: 1;
-}
-
 .terminal-host {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   display: flex;
 }
 

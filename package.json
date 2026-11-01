@@ -17,6 +17,9 @@
     "@codemirror/view": "^6.43.15",
     "@lezer/highlight": "^1.2.5",
     "@preact/signals": "^2.11.4",
+    "dompurify": "^3.4.17",
+    "fflate": "^0.8.3",
+    "marked": "^18.1.2",
     "preact": "^11.1.1"
   },
   "devDependencies": {

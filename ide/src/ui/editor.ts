@@ -123,6 +123,7 @@ function uncommentRegion(view: EditorView) {
 
 export interface EditorOptions {
   parent: HTMLElement;
+  documentId: string;
   code: string;
   language: string;
   phrases: Record<string, Record<string, string>>;
@@ -136,9 +137,15 @@ export class CodeEditor {
   private view: EditorView;
   private phrases = new Compartment();
   private allPhrases: Record<string, Record<string, string>>;
+  private extensions: Extension[];
+  private documentId: string;
+  private language: string;
+  private states = new Map<string, EditorState>();
 
   constructor(options: EditorOptions) {
     this.allPhrases = options.phrases;
+    this.documentId = options.documentId;
+    this.language = options.language;
     const extensions: Extension[] = [
       lineNumbers(),
       highlightActiveLine(),
@@ -180,8 +187,18 @@ export class CodeEditor {
       }),
     ];
     if (options.wrapLines) extensions.push(EditorView.lineWrapping);
+    this.extensions = extensions;
 
     this.view = new EditorView({ parent: options.parent, state: EditorState.create({ doc: options.code, extensions }) });
+  }
+
+  // Keeps each workspace's undo history for this visit, unless its code changed elsewhere.
+  showDocument(id: string, code: string) {
+    this.states.set(this.documentId, this.view.state);
+    const known = this.states.get(id);
+    this.view.setState(known?.doc.toString() === code ? known : EditorState.create({ doc: code, extensions: this.extensions }));
+    this.documentId = id;
+    this.setLanguage(this.language);
   }
 
   get code() {
@@ -197,6 +214,7 @@ export class CodeEditor {
   }
 
   setLanguage(language: string) {
+    this.language = language;
     this.view.dispatch({ effects: this.phrases.reconfigure(EditorState.phrases.of(this.allPhrases[language])) });
   }
 

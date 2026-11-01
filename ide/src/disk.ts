@@ -12,11 +12,11 @@ export type SaveResult = { name: string; handle: FileSystemFileHandle | null } |
 
 // Chromium on desktop can write in place, so repeated saves update one file. Everywhere else
 // it's a download. Returns null if the student cancelled.
-export async function saveToDisk(name: string, text: string, handle: FileSystemFileHandle | null): Promise<SaveResult> {
+export async function saveToDisk(name: string, content: string | Blob, handle: FileSystemFileHandle | null): Promise<SaveResult> {
   const picker = (window as SaveFilePicker).showSaveFilePicker;
   if (!picker) {
     const link = document.createElement("a");
-    link.href = URL.createObjectURL(new Blob([text], { type: "text/x-python" }));
+    link.href = URL.createObjectURL(content instanceof Blob ? content : new Blob([content], { type: "text/x-python" }));
     link.download = name;
     link.click();
     setTimeout(() => URL.revokeObjectURL(link.href), 10000);
@@ -27,10 +27,12 @@ export async function saveToDisk(name: string, text: string, handle: FileSystemF
       handle ??
       (await picker.call(window, {
         suggestedName: name,
-        types: [{ description: "Python", accept: { "text/x-python": [".py"] } }],
+        types: content instanceof Blob
+          ? [{ description: "Zip", accept: { "application/zip": [".zip"] } }]
+          : [{ description: "Python", accept: { "text/x-python": [".py"] } }],
       }));
     const writable = await target.createWritable();
-    await writable.write(text);
+    await writable.write(content);
     await writable.close();
     return { name: target.name, handle: target };
   } catch (error) {

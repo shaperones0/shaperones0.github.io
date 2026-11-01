@@ -2,16 +2,22 @@ import { useSignal, useSignalEffect } from "@preact/signals";
 import { useEffect, useRef } from "preact/hooks";
 import { editorPhrases, t } from "../i18n";
 import {
+  activeTask,
+  activeTaskHasTests,
   attach,
   canRun,
+  check,
+  checkProgress,
   cleanFileName,
   codeChanged,
   consoleUsed,
   downloadProgress,
   fileName,
   heapMb,
+  levelBlock,
   openFile,
   renameEntry,
+  resetToStarter,
   run,
   runState,
   runWaitMs,
@@ -19,20 +25,43 @@ import {
   saveInBrowser,
   sendEof,
   sendInputLine,
+  showToast,
   stop,
   toast,
 } from "../session";
 import { cycleTheme, language, theme, toggleLanguage } from "../settings";
+import { CheckResults } from "./CheckResults";
 import { CodeEditor } from "./editor";
+import { Statement } from "./Statement";
 import { Terminal } from "./terminal";
+import { OpenTaskDialog, WorkspaceCurtain, WorkspaceTabs } from "./Workspaces";
 
 const NARROW_QUERY = "(max-width: 799px)";
 const CONSOLE_HEIGHT_KEY = "ide-console-height";
+const STATEMENT_WIDTH_KEY = "ide-statement-width";
 const MIN_PANE_PX = 80;
+const MIN_COLUMN_PX = 260;
 const isTouch = matchMedia("(pointer: coarse)").matches;
 const showDebug = new URLSearchParams(location.search).has("debug");
 
 const KEY_BAR_KEYS = [":", "(", ")", "[", "]", "=", '"', "'", "+", "-", "*", "/", "<", ">", ",", ".", "#", "_"];
+
+type NarrowView = "statement" | "code" | "console" | "check";
+type BottomView = "console" | "check";
+
+function safeRead(key: string) {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function safeWrite(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {}
+}
 
 function useMediaQuery(query: string) {
   const list = useRef(matchMedia(query)).current;
@@ -60,6 +89,45 @@ function useVisibleHeight() {
   }, []);
 }
 
+// Open files by dropping them anywhere. Listens first, so the editor doesn't take the drop as text.
+function useFileDrop() {
+  const dragging = useSignal(false);
+  useEffect(() => {
+    let depth = 0;
+    const hasFiles = (event: DragEvent) => event.dataTransfer?.types.includes("Files");
+    const onEnter = (event: DragEvent) => {
+      if (!hasFiles(event)) return;
+      depth++;
+      dragging.value = true;
+    };
+    const onOver = (event: DragEvent) => {
+      if (hasFiles(event)) event.preventDefault();
+    };
+    const onLeave = (event: DragEvent) => {
+      if (!hasFiles(event)) return;
+      depth = Math.max(depth - 1, 0);
+      if (!depth) dragging.value = false;
+    };
+    const onDrop = (event: DragEvent) => {
+      if (!hasFiles(event)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      depth = 0;
+      dragging.value = false;
+      const file = event.dataTransfer?.files[0];
+      if (!file) return;
+      if (/\.(pytask|py|pyw|txt)$/i.test(file.name)) openFile(file);
+      else showToast(t("dropUnsupported"));
+    };
+    const listeners = { dragenter: onEnter, dragover: onOver, dragleave: onLeave, drop: onDrop };
+    for (const [name, listener] of Object.entries(listeners)) addEventListener(name, listener as EventListener, true);
+    return () => {
+      for (const [name, listener] of Object.entries(listeners)) removeEventListener(name, listener as EventListener, true);
+    };
+  }, []);
+  return dragging;
+}
+
 function FileName() {
   const editing = useSignal(false);
   const finish = (value: string | null) => {
@@ -67,6 +135,8 @@ function FileName() {
     const name = value === null ? null : cleanFileName(value);
     if (name) renameEntry(name);
   };
+  // A task chose this name so that files stay findable, so students can't change it.
+  if (activeTask.value) return <span class="file-name">{fileName.value}</span>;
   if (!editing.value) {
     return (
       <button class="file-name" title={t("rename")} onClick={() => (editing.value = true)}>
@@ -104,11 +174,13 @@ function themeLabel() {
   return t(theme.value === "system" ? "themeSystem" : theme.value === "light" ? "themeLight" : "themeDark");
 }
 
-function FileActions({ onOpen }: { onOpen(): void }) {
+function FileActions({ onOpen, onOpenTask }: { onOpen(): void; onOpenTask(): void }) {
   return (
     <>
+      <button onClick={onOpenTask}>{t("openTask")}</button>
       <button onClick={saveFile}>{t("save")}</button>
       <button onClick={onOpen}>{t("open")}</button>
+      {activeTask.value && <button onClick={resetToStarter}>{t("resetToStarter")}</button>}
       <button onClick={cycleTheme}>{themeLabel()}</button>
       <button onClick={toggleLanguage}>{t("language")}</button>
     </>
@@ -152,24 +224,46 @@ function DebugLine() {
   );
 }
 
-export function App({ initialCode }: { initialCode: string }) {
+// Drags a pane's size with pointer capture, and saves the result.
+function startDrag(event: PointerEvent, onMove: (move: PointerEvent) => void, onDone: () => void) {
+  event.preventDefault();
+  const handle = event.currentTarget as HTMLElement;
+  handle.setPointerCapture(event.pointerId);
+  const up = () => {
+    handle.removeEventListener("pointermove", onMove);
+    handle.removeEventListener("pointerup", up);
+    onDone();
+  };
+  handle.addEventListener("pointermove", onMove);
+  handle.addEventListener("pointerup", up);
+}
+
+export function App({ initial }: { initial: { id: string; code: string } }) {
   useVisibleHeight();
+  const dragging = useFileDrop();
   const isNarrow = useMediaQuery(NARROW_QUERY);
-  const view = useSignal<"code" | "console">("code");
-  const consoleOpen = useSignal(false);
+  const narrowView = useSignal<NarrowView>(activeTask.peek() ? "statement" : "code");
+  const bottomView = useSignal<BottomView>("console");
+  const bottomOpen = useSignal(false);
+  const statementOpen = useSignal(true);
   const menuOpen = useSignal(false);
+  const curtainOpen = useSignal(false);
+  const taskDialogOpen = useSignal(false);
   const editorFocused = useSignal(false);
   const consoleHeight = useSignal(Number(safeRead(CONSOLE_HEIGHT_KEY)) || 240);
+  const statementWidth = useSignal(Number(safeRead(STATEMENT_WIDTH_KEY)) || 0);
   const editorHost = useRef<HTMLDivElement>(null);
   const terminalHost = useRef<HTMLDivElement>(null);
   const editorRef = useRef<CodeEditor | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
-  const mainRef = useRef<HTMLElement>(null);
+  const columnRef = useRef<HTMLDivElement>(null);
+  const layoutRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
     const editor = new CodeEditor({
       parent: editorHost.current!,
-      code: initialCode,
+      documentId: initial.id,
+      code: initial.code,
       language: language.peek(),
       phrases: editorPhrases,
       wrapLines: isTouch,
@@ -189,8 +283,18 @@ export function App({ initialCode }: { initialCode: string }) {
       editor,
       terminal,
       onRunStarted: () => {
-        consoleOpen.value = true;
-        view.value = "console";
+        bottomOpen.value = true;
+        bottomView.value = "console";
+        narrowView.value = "console";
+      },
+      onCheckStarted: () => {
+        bottomOpen.value = true;
+        bottomView.value = "check";
+        narrowView.value = "check";
+      },
+      onTaskOpened: () => {
+        statementOpen.value = true;
+        narrowView.value = "statement";
       },
     });
     const onKeyDown = (event: KeyboardEvent) => {
@@ -217,67 +321,105 @@ export function App({ initialCode }: { initialCode: string }) {
     document.title = `${fileName.value} — Python IDE`;
   });
 
-  const startResize = (event: PointerEvent) => {
-    event.preventDefault();
-    const handle = event.currentTarget as HTMLElement;
-    handle.setPointerCapture(event.pointerId);
-    const onMove = (move: PointerEvent) => {
-      const bounds = mainRef.current!.getBoundingClientRect();
-      consoleHeight.value = Math.min(Math.max(bounds.bottom - move.clientY, MIN_PANE_PX), bounds.height - MIN_PANE_PX);
-    };
-    const onUp = () => {
-      handle.removeEventListener("pointermove", onMove);
-      handle.removeEventListener("pointerup", onUp);
-      safeWrite(CONSOLE_HEIGHT_KEY, String(Math.round(consoleHeight.value)));
-    };
-    handle.addEventListener("pointermove", onMove);
-    handle.addEventListener("pointerup", onUp);
+  // A tab without its own content shouldn't stay selected after switching to Scratch.
+  useSignalEffect(() => {
+    if (!activeTask.value && narrowView.peek() === "statement") narrowView.value = "code";
+    if (!activeTaskHasTests.value && narrowView.peek() === "check") narrowView.value = "console";
+    if (!activeTaskHasTests.value && bottomView.peek() === "check") bottomView.value = "console";
+  });
+
+  const startConsoleResize = (event: PointerEvent) => {
+    startDrag(
+      event,
+      (move) => {
+        const bounds = columnRef.current!.getBoundingClientRect();
+        consoleHeight.value = Math.min(Math.max(bounds.bottom - move.clientY, MIN_PANE_PX), bounds.height - MIN_PANE_PX);
+      },
+      () => safeWrite(CONSOLE_HEIGHT_KEY, String(Math.round(consoleHeight.value))),
+    );
+  };
+
+  const startStatementResize = (event: PointerEvent) => {
+    startDrag(
+      event,
+      (move) => {
+        const bounds = layoutRef.current!.getBoundingClientRect();
+        statementWidth.value = Math.min(Math.max(move.clientX - bounds.left, MIN_COLUMN_PX), bounds.width - MIN_COLUMN_PX);
+      },
+      () => safeWrite(STATEMENT_WIDTH_KEY, String(Math.round(statementWidth.value))),
+    );
   };
 
   const narrow = isNarrow.value;
-  const running = runState.value !== "idle";
-  const showCode = !narrow || view.value === "code";
-  const showConsole = narrow ? view.value === "console" : consoleUsed.value && consoleOpen.value;
+  const task = activeTask.value;
+  const canCheck = activeTaskHasTests.value;
+  const busy = runState.value !== "idle";
+  const compactButtons = narrow && canCheck;
+  const hasBottom = consoleUsed.value || checkProgress.value !== null;
+  const showStatement = Boolean(task) && (narrow ? narrowView.value === "statement" : statementOpen.value);
+  const showCode = !narrow || narrowView.value === "code";
+  const showBottom = narrow ? narrowView.value === "console" || narrowView.value === "check" : hasBottom && bottomOpen.value;
+  const shownBottomView: BottomView = narrow ? (narrowView.value === "check" ? "check" : "console") : bottomView.value;
   const progress = downloadProgress.value;
   const openPicker = () => {
+    taskDialogOpen.value = false;
     menuOpen.value = false;
     fileInput.current?.click();
+  };
+  const openTaskDialog = () => {
+    menuOpen.value = false;
+    taskDialogOpen.value = true;
   };
 
   return (
     <div class="app">
       <header class="toolbar">
-        {running ? (
-          <button class="primary stop" onClick={stop}>■ {t("stop")}</button>
+        {narrow && (
+          <button class="menu-button" aria-label={t("workspaces")} onClick={() => (curtainOpen.value = true)}>☰</button>
+        )}
+        {busy ? (
+          <button class="primary stop" aria-label={t("stop")} onClick={stop}>■ {!compactButtons && t("stop")}</button>
         ) : (
-          <button class="primary" disabled={!canRun} onClick={run}>▶ {t("run")}</button>
+          <>
+            <button class="primary" aria-label={t("run")} disabled={!canRun} onClick={run}>▶ {!compactButtons && t("run")}</button>
+            {canCheck && (
+              <button class="check-button" aria-label={t("check")} disabled={!canRun} onClick={check}>✓ {!compactButtons && t("check")}</button>
+            )}
+          </>
         )}
         <FileName />
-        {!narrow && consoleUsed.value && !consoleOpen.value && (
-          <button onClick={() => (consoleOpen.value = true)}>{t("console")}</button>
+        {!narrow && task && !statementOpen.value && (
+          <button onClick={() => (statementOpen.value = true)}>{t("statement")}</button>
+        )}
+        {!narrow && hasBottom && !bottomOpen.value && (
+          <button onClick={() => (bottomOpen.value = true)}>{t("console")}</button>
         )}
         <span class="toolbar-status" role="status">
-          {progress !== null ? t("downloading", { percent: Math.round(progress * 100) }) : runState.value === "starting" ? t("starting") : ""}
+          {progress !== null
+            ? t("downloading", { percent: Math.round(progress * 100) })
+            : runState.value === "starting"
+              ? t("starting")
+              : ""}
         </span>
         {narrow ? (
           <div class="menu">
-            <button aria-label={t("more")} aria-expanded={menuOpen.value} onClick={() => (menuOpen.value = !menuOpen.value)}>⋮</button>
+            <button class="menu-button" aria-label={t("more")} aria-expanded={menuOpen.value} onClick={() => (menuOpen.value = !menuOpen.value)}>⋮</button>
             {menuOpen.value && (
               <div class="menu-items" onClick={() => (menuOpen.value = false)}>
-                <FileActions onOpen={openPicker} />
+                <FileActions onOpen={openPicker} onOpenTask={openTaskDialog} />
               </div>
             )}
           </div>
         ) : (
           <div class="toolbar-actions">
-            <FileActions onOpen={openPicker} />
+            <FileActions onOpen={openPicker} onOpenTask={openTaskDialog} />
           </div>
         )}
         <input
           ref={fileInput}
           type="file"
           hidden
-          accept={isTouch ? undefined : ".py,.pyw,.txt"}
+          accept={isTouch ? undefined : ".py,.pyw,.txt,.pytask"}
           onChange={(event) => {
             const file = event.currentTarget.files?.[0];
             if (file) openFile(file);
@@ -292,47 +434,85 @@ export function App({ initialCode }: { initialCode: string }) {
         </p>
       )}
 
+      {!narrow && <WorkspaceTabs />}
+
       {narrow && (
         <div class="view-tabs" role="tablist">
-          <button role="tab" aria-selected={view.value === "code"} onClick={() => (view.value = "code")}>{t("code")}</button>
-          <button role="tab" aria-selected={view.value === "console"} onClick={() => (view.value = "console")}>{t("console")}</button>
+          {task && (
+            <button role="tab" aria-selected={narrowView.value === "statement"} onClick={() => (narrowView.value = "statement")}>{t("statement")}</button>
+          )}
+          <button role="tab" aria-selected={narrowView.value === "code"} onClick={() => (narrowView.value = "code")}>{t("code")}</button>
+          <button role="tab" aria-selected={narrowView.value === "console"} onClick={() => (narrowView.value = "console")}>{t("console")}</button>
+          {canCheck && checkProgress.value && (
+            <button role="tab" aria-selected={narrowView.value === "check"} onClick={() => (narrowView.value = "check")}>{t("checkTab")}</button>
+          )}
         </div>
       )}
 
-      <main class="workspace" ref={mainRef}>
-        <div class="pane editor-pane" ref={editorHost} hidden={!showCode} />
-        {!narrow && showConsole && (
-          <div class="splitter" role="separator" aria-orientation="horizontal" onPointerDown={startResize} />
+      <main class={`layout ${task && !narrow ? "layout-split" : "layout-centered"}`} ref={layoutRef}>
+        {task && (
+          <section
+            class="statement-pane"
+            hidden={!showStatement}
+            style={!narrow && statementWidth.value ? { flexBasis: `${statementWidth.value}px` } : undefined}
+          >
+            {!narrow && (
+              <button class="pane-close" aria-label={t("closeStatement")} title={t("closeStatement")} onClick={() => (statementOpen.value = false)}>×</button>
+            )}
+            <Statement task={task} />
+          </section>
         )}
-        <div
-          class="pane console-pane"
-          hidden={!showConsole}
-          style={narrow ? undefined : { height: `${consoleHeight.value}px` }}
-        >
-          {!narrow && (
-            <button class="console-close" aria-label={t("closeConsole")} title={t("closeConsole")} onClick={() => (consoleOpen.value = false)}>×</button>
+        {task && !narrow && statementOpen.value && (
+          <div class="column-splitter" role="separator" aria-orientation="vertical" onPointerDown={startStatementResize} />
+        )}
+        <div class="code-column" ref={columnRef} hidden={narrow && !showCode && !showBottom}>
+          <div class="pane editor-pane" ref={editorHost} hidden={!showCode} />
+          {!narrow && showBottom && (
+            <div class="splitter" role="separator" aria-orientation="horizontal" onPointerDown={startConsoleResize} />
           )}
-          <div class="terminal-host" ref={terminalHost} />
+          <div
+            class="pane console-pane"
+            hidden={!showBottom}
+            style={narrow ? undefined : { height: `${consoleHeight.value}px` }}
+          >
+            {!narrow && (
+              <div class="pane-header">
+                {canCheck && checkProgress.value ? (
+                  <div class="pane-tabs" role="tablist">
+                    <button role="tab" aria-selected={bottomView.value === "console"} onClick={() => (bottomView.value = "console")}>{t("console")}</button>
+                    <button role="tab" aria-selected={bottomView.value === "check"} onClick={() => (bottomView.value = "check")}>{t("checkTab")}</button>
+                  </div>
+                ) : (
+                  <span class="pane-title">{t("console")}</span>
+                )}
+                <button class="pane-close-inline" aria-label={t("closeConsole")} title={t("closeConsole")} onClick={() => (bottomOpen.value = false)}>×</button>
+              </div>
+            )}
+            <div class="terminal-host" ref={terminalHost} hidden={shownBottomView !== "console"} />
+            {shownBottomView === "check" && <CheckResults />}
+          </div>
         </div>
       </main>
 
       {isTouch && showCode && editorFocused.value && editorRef.current && <KeyBar editor={editorRef.current} />}
       {showDebug && <DebugLine />}
       {toast.value && <div class="toast" role="status">{toast.value}</div>}
+      {dragging.value && <div class="drop-overlay">{t("dropHere")}</div>}
+      {curtainOpen.value && <WorkspaceCurtain onClose={() => (curtainOpen.value = false)} />}
+      {taskDialogOpen.value && <OpenTaskDialog onClose={() => (taskDialogOpen.value = false)} onPickFile={openPicker} />}
+      {levelBlock.value && (
+        <div class="curtain-backdrop dialog-backdrop">
+          <div class="dialog" role="alertdialog">
+            <h2>{levelBlock.value.title}</h2>
+            <p>{t("levelTooLow", { level: levelBlock.value.minLevel })}</p>
+            <div class="dialog-actions">
+              <span class="dialog-spacer" />
+              <button class="primary" onClick={() => (levelBlock.value = null)}>{t("ok")}</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function safeRead(key: string) {
-  try {
-    return localStorage.getItem(key);
-  } catch {
-    return null;
-  }
-}
-
-function safeWrite(key: string, value: string) {
-  try {
-    localStorage.setItem(key, value);
-  } catch {}
-}

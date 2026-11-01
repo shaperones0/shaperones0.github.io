@@ -1,5 +1,5 @@
-// Page-side handle for one interpreter in its own worker. Each is used for a single program,
-// which gives every run a clean state and lets Stop always succeed by killing the worker.
+// Page-side handle for one interpreter in its own worker. Runs get one each, for a clean state,
+// and Stop can always succeed by killing the worker. Checks reuse one across a task's tests.
 import {
   CTRL,
   CTRL_LENGTH,
@@ -19,7 +19,7 @@ const STOP_KILL_MS = 1500;
 export const HEAP_LIMIT_MB = matchMedia("(pointer: coarse)").matches ? 512 : 2048;
 
 export type RunResult =
-  | { kind: "exit"; status: number; stopped: boolean; errorLine: number | null }
+  | { kind: "exit"; status: number; stopped: boolean; errorLine: number | null; files?: Record<string, string | null> }
   | { kind: "killed" }
   | { kind: "crash"; message: string };
 
@@ -46,15 +46,18 @@ export class Interpreter {
   private decoders: Record<number, TextDecoder> = { 1: new TextDecoder(), 2: new TextDecoder() };
   private callbacks: RunCallbacks | null = null;
   private drainTimer = 0;
-  private resolveResult!: (result: RunResult) => void;
+  private resolveDeath!: (result: RunResult) => void;
+  private resolveRun: ((result: RunResult) => void) | null = null;
   private resolveBoot!: (bootMs: number | null) => void;
   private settled = false;
   private pendingLines: string[] = [];
   private inputRequested = false;
+  private stopTimers: ReturnType<typeof setTimeout>[] = [];
 
   // Resolves when the interpreter is ready, or with null if it died while booting.
   readonly booted = new Promise<number | null>((resolve) => (this.resolveBoot = resolve));
-  readonly finished = new Promise<RunResult>((resolve) => (this.resolveResult = resolve));
+  // Resolves when the worker is gone, however that happened.
+  readonly finished = new Promise<RunResult>((resolve) => (this.resolveDeath = resolve));
 
   constructor() {
     this.worker.onmessage = ({ data }: MessageEvent<WorkerEvent>) => this.onMessage(data);
@@ -69,10 +72,18 @@ export class Interpreter {
     this.worker.postMessage(command, transfer);
   }
 
+  get isDead() {
+    return this.settled;
+  }
+
+  // Resolves when this program ends. The interpreter stays usable unless the program killed it.
   start(program: ProgramRequest, callbacks: RunCallbacks) {
     this.callbacks = callbacks;
+    this.pendingLines = [];
+    clearInterval(this.drainTimer);
     this.drainTimer = window.setInterval(() => this.drain(), 16);
     this.post({ type: "run", ...program }, program.stdin ? [program.stdin.buffer] : []);
+    return new Promise<RunResult>((resolve) => (this.resolveRun = resolve));
   }
 
   private onMessage(event: WorkerEvent) {
@@ -89,9 +100,15 @@ export class Interpreter {
         if (this.pendingLines.length) this.answerWithLine(this.pendingLines.shift()!);
         else this.callbacks?.onInputRequest();
         break;
-      case "done":
-        this.finish({ kind: "exit", status: event.status, stopped: event.stopped, errorLine: event.errorLine });
+      case "done": {
+        this.drain();
+        const resolve = this.resolveRun;
+        this.resolveRun = null;
+        this.stopTimers.forEach(clearTimeout);
+        clearInterval(this.drainTimer);
+        resolve?.({ kind: "exit", status: event.status, stopped: event.stopped, errorLine: event.errorLine, files: event.files });
         break;
+      }
       case "fatal":
         this.finish({ kind: "crash", message: event.message });
         break;
@@ -118,11 +135,18 @@ export class Interpreter {
   private finish(result: RunResult) {
     if (this.settled) return;
     this.settled = true;
+    this.stopTimers.forEach(clearTimeout);
     this.resolveBoot(null);
     this.drain();
     clearInterval(this.drainTimer);
     this.worker.terminate();
-    this.resolveResult(result);
+    this.resolveRun?.(result);
+    this.resolveRun = null;
+    this.resolveDeath(result);
+  }
+
+  dispose() {
+    this.kill();
   }
 
   // Lines typed before the program asks for them wait here, like a terminal's type-ahead.
@@ -159,12 +183,7 @@ export class Interpreter {
   // Pyodide occasionally consumes an interrupt without raising it, so retry before killing.
   stop() {
     this.interrupt();
-    const retry = setTimeout(() => this.interrupt(), STOP_RETRY_MS);
-    const kill = setTimeout(() => this.kill(), STOP_KILL_MS);
-    this.finished.then(() => {
-      clearTimeout(retry);
-      clearTimeout(kill);
-    });
+    this.stopTimers = [setTimeout(() => this.interrupt(), STOP_RETRY_MS), setTimeout(() => this.kill(), STOP_KILL_MS)];
   }
 
   kill() {

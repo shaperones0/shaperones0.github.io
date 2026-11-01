@@ -11,6 +11,6 @@ declare global {
 }
 
 window.coiReady.then(async () => {
-  const initialCode = await loadInitialWorkspace();
-  render(<App initialCode={initialCode} />, document.getElementById("app")!);
+  const initial = await loadInitialWorkspace();
+  render(<App initial={initial} />, document.getElementById("app")!);
 });

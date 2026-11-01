@@ -315,10 +315,10 @@ test("the runtime is kept in a permanent cache", async ({ page }) => {
     .toBe(true);
 });
 
-test("the short address keeps query and hash, and the page recovers isolation", async ({ page }) => {
-  await page.goto("/ide/?task=a#pkg=abc");
-  await expect(editor(page)).toBeVisible({ timeout: 30_000 });
-  await expect(page).toHaveURL(/\/ide\/1\/\?task=a#pkg=abc$/);
+test("the short address keeps a task link, and the page recovers isolation", async ({ page }) => {
+  await page.goto("/ide/?task=sum-task");
+  await expect(page.locator(".statement")).toBeVisible({ timeout: 30_000 });
+  await expect(page).toHaveURL(/\/ide\/1\/\?task=sum-task$/);
   expect(await page.evaluate(() => crossOriginIsolated)).toBe(true);
 });
 

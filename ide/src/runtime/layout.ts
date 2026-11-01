@@ -24,6 +24,7 @@ export interface ProgramRequest {
   entry: string;
   files: Record<string, string>;
   stdin?: Uint8Array<ArrayBuffer>;
+  collect?: string[];
 }
 
 export type WorkerCommand =
@@ -34,5 +35,5 @@ export type WorkerEvent =
   | { type: "ready"; bootMs: number }
   | { type: "started" }
   | { type: "stdin-request" }
-  | { type: "done"; status: number; stopped: boolean; errorLine: number | null }
+  | { type: "done"; status: number; stopped: boolean; errorLine: number | null; files?: Record<string, string | null> }
   | { type: "fatal"; message: string };

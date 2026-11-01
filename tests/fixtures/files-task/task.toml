@@ -1,0 +1,9 @@
+id = "files-task"
+version = 1
+title = "Файлы"
+uses_files = true
+
+[[group]]
+name = "files"
+display = "hidden"
+protection = "hashed"
