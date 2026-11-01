@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>IDE spike</title>
+  <script src="../coi.js"></script>
+  <style>
+    :root { color-scheme: light dark; --ok: #1a7f37; --bad: #cf222e; --input: #1a7f37; --muted: #6e7781; --line: #8884; }
+    @media (prefers-color-scheme: dark) { :root { --ok: #3fb950; --bad: #ff7b72; --input: #3fb950; --muted: #8b949e; } }
+    body { font: 16px/1.45 system-ui, sans-serif; margin: 0 auto; padding: 16px; max-width: 860px; }
+    h1 { font-size: 1.4rem; } h2 { font-size: 1.1rem; margin-top: 2rem; }
+    button { font: inherit; padding: 8px 14px; min-height: 40px; }
+    textarea, input[type=text] { font: 16px/1.4 ui-monospace, Consolas, monospace; width: 100%; box-sizing: border-box; padding: 8px; }
+    pre { font: 14px/1.4 ui-monospace, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid var(--line); padding: 10px; margin: 8px 0; }
+    #console-output { height: 220px; overflow-y: auto; }
+    #console-form { display: flex; gap: 8px; }
+    #results { padding-left: 1.2rem; font-size: 14px; }
+    .pass { color: var(--ok); } .fail { color: var(--bad); font-weight: 600; }
+    .stdin { color: var(--input); font-style: italic; } .stderr { color: var(--bad); } .meta { color: var(--muted); }
+    #report { max-height: 260px; overflow-y: auto; }
+    #storage-id { font: 700 1.3rem ui-monospace, Consolas, monospace; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+  </style>
+</head>
+<body>
+  <h1>IDE technical spike</h1>
+  <p id="status"></p>
+
+  <h2>1. Automatic tests</h2>
+  <p>Takes a minute or two. The last test deliberately exhausts memory, so a phone may reload this page; it will say so if that happens.</p>
+  <button id="run-tests" disabled>Run all tests</button>
+  <p id="summary"></p>
+  <ol id="results"></ol>
+
+  <h2>2. Console by hand</h2>
+  <p>Typed input should appear in green italic. Try Stop while it waits for input.</p>
+  <textarea id="code" rows="6" spellcheck="false" autocapitalize="off" autocorrect="off">name = input("Имя: ")
+print("Привет,", name)
+for i in range(3):
+    print(i, input())
+print(1 / 0)</textarea>
+  <div class="row">
+    <button id="run" disabled>Run</button>
+    <button id="stop" disabled>Stop</button>
+    <button id="eof" disabled>Send EOF</button>
+  </div>
+  <pre id="console-output"></pre>
+  <form id="console-form">
+    <input id="console-input" type="text" disabled autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Program input">
+    <button>Enter</button>
+  </form>
+
+  <h2>3. Storage</h2>
+  <p>Storage ID: <span id="storage-id">…</span></p>
+  <p id="storage-note"></p>
+  <p>Open this page in the messenger's built-in browser and in Safari or Chrome. A different ID means separate storage. Come back after 8 or more days: a new ID with one visit means the browser deleted the data.</p>
+
+  <h2>4. Report</h2>
+  <button id="copy">Copy report</button>
+  <pre id="report"></pre>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
