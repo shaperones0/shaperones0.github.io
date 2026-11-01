@@ -1,5 +1,6 @@
 // Ties the open workspaces to the editor, the console and the interpreter.
 import { computed, signal } from "@preact/signals";
+import { strToU8, zipSync } from "fflate";
 import { FileTooLargeError, readCodeFile, saveToDisk } from "./disk";
 import { t } from "./i18n";
 import { downloadRuntime, takeInterpreter, warmUp, warmUpWhenIdle } from "./runtime/pool";
@@ -305,8 +306,7 @@ export async function saveInBrowser() {
   if (!storageFailureShown) showToast(t("savedInBrowser"));
 }
 
-async function zipFiles(files: Record<string, string>) {
-  const { strToU8, zipSync } = await import("fflate");
+function zipFiles(files: Record<string, string>) {
   const entries = Object.fromEntries(Object.entries(files).map(([name, text]) => [name, strToU8(text)]));
   return new Blob([zipSync(entries) as Uint8Array<ArrayBuffer>], { type: "application/zip" });
 }
@@ -317,7 +317,7 @@ export async function saveFile() {
   const isSingle = Object.keys(workspace.files).length === 1;
   const baseName = activeTask.value?.manifest.name ?? workspace.entry.replace(/\.py$/, "");
   try {
-    const content = isSingle ? editor.code : await zipFiles({ ...workspace.files, [workspace.entry]: editor.code });
+    const content = isSingle ? editor.code : zipFiles({ ...workspace.files, [workspace.entry]: editor.code });
     const saved = await saveToDisk(isSingle ? workspace.entry : `${baseName}.zip`, content, diskHandle);
     if (!saved) return;
     diskHandle = saved.handle;

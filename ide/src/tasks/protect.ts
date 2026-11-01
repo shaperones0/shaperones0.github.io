@@ -2,7 +2,7 @@
 // All of this only deters: the page has to be able to read whatever it checks with.
 import { unzlibSync } from "fflate";
 
-export type Comparison = "exact" | "lines" | "tokens" | "float";
+export type Comparison = "exact" | "lines" | "tokens" | "float" | "script";
 
 const WHITESPACE = /[ \t\r\n\f\v]+/;
 const encoder = new TextEncoder();
@@ -53,9 +53,9 @@ function decodeBase64(text: string) {
   return bytes;
 }
 
-export async function unseal<T>(taskId: string, groupIndex: number, sealed: string): Promise<T> {
+export async function unseal<T>(taskId: string, part: number | string, sealed: string): Promise<T> {
   const data = decodeBase64(sealed);
-  const digest = await sha256(`pytask:${taskId}:${groupIndex}`);
+  const digest = await sha256(`pytask:${taskId}:${part}`);
   let state = (new DataView(digest.buffer).getUint32(0) | 1) >>> 0;
   for (let i = 0; i < data.length; i++) {
     state = (state ^ (state << 13)) >>> 0;

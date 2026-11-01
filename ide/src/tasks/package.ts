@@ -47,6 +47,7 @@ export interface Task {
   statements: { ru?: string; en?: string };
   assets: Map<string, Uint8Array<ArrayBuffer>>;
   starter: Record<string, string>;
+  sealedCheck?: string;
   bytes: Uint8Array<ArrayBuffer>;
 }
 
@@ -98,7 +99,7 @@ export function parsePackage(bytes: Uint8Array<ArrayBuffer>): Task {
     if (name.startsWith("assets/")) assets.set(name, data as Uint8Array<ArrayBuffer>);
     if (name.startsWith("starter/")) starter[name.slice("starter/".length)] = new TextDecoder().decode(data);
   }
-  return { manifest, groups, statements, assets, starter, bytes };
+  return { manifest, groups, statements, assets, starter, sealedCheck: text("check.sealed"), bytes };
 }
 
 export function hasTests(task: Task) {

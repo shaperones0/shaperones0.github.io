@@ -47,9 +47,20 @@ To update a published task, raise its `version` and rebuild. Students keep their
 | `name` | suggested file name, without `.py` | `main` |
 | `min_level` | 1 or 2 | 1, or 2 with `uses_files` |
 | `uses_files` | `true` or `false` | `false` |
-| `comparison` | `lines` ignores trailing spaces and blank lines; `exact`; `tokens` ignores all whitespace differences; `float` compares numbers | `lines` |
+| `comparison` | `lines` ignores trailing spaces and blank lines; `exact`; `tokens` ignores all whitespace differences; `float` compares numbers; `script` runs `check.py` | `lines` |
 | `tolerance` | allowed difference for `float` | `1e-6` |
 | `time_limit` | seconds per test | 10 |
+
+With `comparison = "script"`, `check.py` in the task folder decides each result. It's packaged in obfuscated form and never runs alongside student code:
+
+```python
+def check(output, input):  # the input parameter is optional
+    return int(output) > 1 and int(input) % int(output) == 0
+```
+
+It gets the program's printed output exactly as is, and returns whether it's correct. Sample outputs are still shown to students, and the build fails if the script rejects them. Tests can skip their `.out` file unless their group is `listed` or `collapsed`, and script tasks can't use `hashed` or `.expect` folders.
+
+Statements are Markdown, plus `$inline$` and `$$block$$` math. Python code blocks get syntax highlighting, and any code block longer than one line gets line numbers. Neighbouring `test` blocks merge into one table.
 
 Closed tests go in `[[group]]` entries with a `name`, `display` and `protection`, and read from `tests/<name>/`:
 

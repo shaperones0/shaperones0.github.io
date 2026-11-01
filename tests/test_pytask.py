@@ -87,6 +87,56 @@ class TaskFolderTest(unittest.TestCase):
     def test_equal_answers_get_different_hashes(self):
         self.assertNotEqual(pytask.output_hash("t", "0.0", "YES"), pytask.output_hash("t", "0.1", "YES"))
 
+    def write_check_task(self, check="def check(output):\n    return output.strip() == '2'\n", extra="", **kwargs):
+        write_task(self.folder, BASE + 'comparison = "script"\n' + extra, **kwargs)
+        (self.folder / "check.py").write_text(check, encoding="utf-8")
+
+    def test_check_script_is_required_and_only_allowed_with_its_mode(self):
+        self.assert_rejected("needs check.py", BASE + 'comparison = "script"\n')
+        (self.folder / "check.py").write_text("def check(output):\n    return True\n", encoding="utf-8")
+        self.assert_rejected("only used with", BASE)
+
+    def test_check_script_rejects_being_hashed(self):
+        self.write_check_task(extra=SECRET_GROUP, tests=SECRET_TESTS)
+        with self.assertRaisesRegex(pytask.TaskError, "nothing to hash"):
+            pytask.load_task(self.folder)
+
+    def test_check_script_tests_need_no_expected_output_unless_shown(self):
+        hidden = '[[group]]\nname = "g"\ndisplay = "hidden"\n'
+        self.write_check_task(extra=hidden, tests={"tests/g/01.in": "1\n"})
+        pytask.load_task(self.folder)
+        self.write_check_task(extra=hidden.replace("hidden", "collapsed"), tests={"tests/g/01.in": "1\n"})
+        with self.assertRaisesRegex(pytask.TaskError, "has no"):
+            pytask.load_task(self.folder)
+
+    def test_check_script_must_accept_sample_outputs(self):
+        self.write_check_task(check="def check(output):\n    return False\n")
+        with self.assertRaisesRegex(pytask.TaskError, "rejects the sample"):
+            self.build()
+
+    def test_a_broken_check_script_stops_the_build(self):
+        self.write_check_task(check="def check(output):\n    raise ValueError('boom')\n")
+        with self.assertRaisesRegex(pytask.TaskError, "boom"):
+            self.build()
+
+    def test_a_solution_rejected_by_the_script_stops_the_build(self):
+        self.write_check_task(solution="print(3)\n")
+        with self.assertRaisesRegex(pytask.TaskError, "rejected by check.py"):
+            self.build()
+
+    def test_a_check_can_use_the_input_and_prints_dont_confuse_it(self):
+        check = "print('noise')\ndef check(output, input):\n    print('more noise')\n    return int(output) == int(input) + 1\n"
+        self.write_check_task(check=check, solution="print(int(input()) + 1)\n")
+        self.build()
+
+    def test_check_script_is_packaged_only_in_sealed_form(self):
+        self.write_check_task(check="MARKER_TEXT = 1\ndef check(output):\n    return output.strip() == '2'\n")
+        self.build()
+        with zipfile.ZipFile(self.out / "t.pytask") as archive:
+            self.assertNotIn("check.py", archive.namelist())
+            sealed = archive.read("check.sealed")
+        self.assertNotIn(b"MARKER_TEXT", sealed)
+
     def test_rebuilding_is_byte_identical(self):
         write_task(self.folder, BASE)
         self.assertEqual(self.build(), self.build())

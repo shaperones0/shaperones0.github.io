@@ -11,7 +11,7 @@ const INDENT = 4;
 const DEDENT_KEYWORDS = /^\s*(return|pass|break|continue|raise)\b/;
 
 // IDLE's colors, read from CSS so that they follow the theme.
-const highlightStyle = HighlightStyle.define([
+export const highlightStyle = HighlightStyle.define([
   { tag: [tags.keyword, tags.operatorKeyword, tags.controlKeyword, tags.definitionKeyword, tags.moduleKeyword, tags.bool, tags.null, tags.self], color: "var(--syntax-keyword)" },
   { tag: [tags.string, tags.special(tags.string)], color: "var(--syntax-string)" },
   { tag: tags.comment, color: "var(--syntax-comment)" },

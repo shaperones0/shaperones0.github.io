@@ -9,6 +9,7 @@ const VERDICT_KEY = {
   timeout: "verdictTimeout",
   crash: "verdictCrash",
   "too-much-output": "verdictTooMuchOutput",
+  "check-failed": "verdictCheckFailed",
 } as const satisfies Record<Verdict, string>;
 
 function Detail({ label, text }: { label: string; text?: string }) {

@@ -11,10 +11,14 @@ A task folder looks like this (see tests/fixtures/sum-task for a full example):
     assets/           images, referenced from the statement by relative paths
     starter/          optional starting files; main.py is the program
     solution.py       optional reference solution; never packaged
+    check.py          for comparison = "script": decides whether an output is correct
     tests/<group>/    closed tests: 01.in, 01.out, optionally 01.files/ and 01.expect/
 
 Open tests are written in the statement, as fenced blocks with the language "test":
 the input, a line of ---, then the expected output.
+
+A check script defines check(output), or check(output, input), and returns whether the
+program's output is correct. It gets the output exactly as printed.
 """
 import argparse
 import base64
@@ -41,7 +45,21 @@ WHITESPACE = re.compile(r"[ \t\r\n\f\v]+")
 IMAGE_TYPES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"}
 DISPLAYS = {"listed", "collapsed", "on-fail", "hidden"}
 PROTECTIONS = {"plain", "obfuscated", "hashed"}
-COMPARISONS = {"exact", "lines", "tokens", "float"}
+COMPARISONS = {"exact", "lines", "tokens", "float", "script"}
+CHECK_FILE = "check.py"
+CHECK_TIMEOUT = 30
+# Prints a check's verdict as the last line of output. Same steps as CHECK_RUNNER in check.ts.
+CHECK_RUNNER = """
+import contextlib, inspect, io, json, sys
+data = json.load(sys.stdin)
+with contextlib.redirect_stdout(io.StringIO()):
+    import check
+    if len(inspect.signature(check.check).parameters) >= 2:
+        result = check.check(data["output"], data["input"])
+    else:
+        result = check.check(data["output"])
+print("1" if result else "0")
+"""
 
 
 class TaskError(Exception):
@@ -145,7 +163,7 @@ def open_tests_from(statements):
     return first
 
 
-def read_closed_tests(folder):
+def read_closed_tests(folder, needs_output=True):
     if not folder.is_dir():
         raise TaskError(f"test folder not found: {folder}")
     tests = []
@@ -153,7 +171,7 @@ def read_closed_tests(folder):
         stem = input_path.stem
         output_path = folder / f"{stem}.out"
         expect_files = read_tree(folder / f"{stem}.expect")
-        if not output_path.exists() and not expect_files:
+        if needs_output and not output_path.exists() and not expect_files:
             raise TaskError(f"{input_path} has no {stem}.out or {stem}.expect/")
         test = {"input": read_text(input_path)}
         if output_path.exists():
@@ -196,6 +214,8 @@ def check_group_settings(settings, mode):
         raise TaskError(f"a {display} group shows expected output, so it can't be hashed")
     if protection == "hashed" and mode == "float":
         raise TaskError("float comparison needs the expected numbers, so it can't be hashed")
+    if protection == "hashed" and mode == "script":
+        raise TaskError("a check script doesn't use expected outputs, so there's nothing to hash; use obfuscated")
     return display, protection
 
 
@@ -219,6 +239,11 @@ def load_task(folder):
     if uses_files and min_level < 2:
         raise TaskError("uses_files needs min_level 2, because Level 1 has no file system")
 
+    if mode == "script" and not (folder / CHECK_FILE).exists():
+        raise TaskError(f"comparison = \"script\" needs {CHECK_FILE} in the task folder")
+    if mode != "script" and (folder / CHECK_FILE).exists():
+        raise TaskError(f"{CHECK_FILE} exists, but it's only used with comparison = \"script\"")
+
     statements = read_statements(folder)
     groups = []
     open_tests = open_tests_from(statements)
@@ -229,7 +254,10 @@ def load_task(folder):
         name = settings.get("name")
         if not name:
             raise TaskError("every [[group]] needs a name")
-        tests = read_closed_tests(folder / settings.get("dir", f"tests/{name}"))
+        shows_expected = display in ("listed", "collapsed")
+        tests = read_closed_tests(folder / settings.get("dir", f"tests/{name}"), needs_output=mode != "script" or shows_expected)
+        if mode == "script" and any("expectFiles" in test for test in tests):
+            raise TaskError("a check script only sees printed output, so .expect folders can't be used with it")
         group = {"name": name, "display": display, "protection": protection}
         group_index = len(groups)
         if protection == "plain":
@@ -260,6 +288,43 @@ def load_task(folder):
     return manifest, statements, groups
 
 
+def run_check(folder, output, test_input):
+    """Returns the script's verdict. Raises TaskError if the script itself fails."""
+    payload = json.dumps({"output": output, "input": test_input})
+    try:
+        done = subprocess.run(
+            [sys.executable, "-X", "utf8", "-c", CHECK_RUNNER],
+            input=payload.encode(), capture_output=True, cwd=folder.resolve(), timeout=CHECK_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        raise TaskError(f"{CHECK_FILE} took longer than {CHECK_TIMEOUT} seconds") from None
+    verdict = done.stdout.decode(errors="replace").strip().rsplit("\n", 1)[-1]
+    if done.returncode or verdict not in ("0", "1"):
+        raise TaskError(f"{CHECK_FILE} failed:\n{done.stderr.decode(errors='replace')}")
+    return verdict == "1"
+
+
+def validate_samples_with_check(folder, groups):
+    """Sample outputs are shown as correct answers, so the check script has to accept them."""
+    count = 0
+    for group in groups:
+        for index, test in enumerate(group.get("_tests") or group["tests"]):
+            if "output" not in test:
+                continue
+            count += 1
+            if not run_check(folder, test["output"], test["input"]):
+                raise TaskError(f"{CHECK_FILE} rejects the sample output of {group['name']} #{index + 1}")
+    return count
+
+
+def solution_failure(folder, mode, tolerance, test, output):
+    if mode == "script":
+        return None if run_check(folder, output, test["input"]) else f"rejected by {CHECK_FILE}\n  output: {output!r}"
+    if "output" in test and not outputs_match(mode, output, test["output"], tolerance):
+        return f"wrong output\n  expected: {test['output']!r}\n  actual:   {output!r}"
+    return None
+
+
 def validate_solution(folder, solution, manifest, groups):
     """Runs the reference solution against every test, so a bad test can't reach students."""
     mode, tolerance = manifest["comparison"], manifest.get("tolerance", 0)
@@ -284,8 +349,9 @@ def validate_solution(folder, solution, manifest, groups):
                 if done.returncode:
                     failures.append(f"{label}: exit code {done.returncode}\n{done.stderr.decode(errors='replace')}")
                     continue
-                if "output" in test and not outputs_match(mode, done.stdout.decode(), test["output"], tolerance):
-                    failures.append(f"{label}: wrong output\n  expected: {test['output']!r}\n  actual:   {done.stdout.decode()!r}")
+                failure = solution_failure(folder, mode, tolerance, test, done.stdout.decode())
+                if failure:
+                    failures.append(f"{label}: {failure}")
                 for name, text in test.get("expectFiles", {}).items():
                     produced = workdir / name
                     actual = produced.read_bytes().decode() if produced.exists() else None
@@ -309,6 +375,8 @@ def build_package(folder, manifest, statements, groups):
     with zipfile.ZipFile(buffer, "w") as archive:
         add_file(archive, "manifest.json", json.dumps(manifest, ensure_ascii=False, indent=1))
         add_file(archive, "tests.json", json.dumps(tests, ensure_ascii=False))
+        if manifest["comparison"] == "script":
+            add_file(archive, "check.sealed", seal(manifest["id"], "check", {"source": read_text(folder / CHECK_FILE)}))
         for language, text in statements.items():
             add_file(archive, f"statement.{language}.md", text)
         for name, text in read_tree(folder / "starter").items():
@@ -330,6 +398,10 @@ def task_link(data, site):
 def build(args):
     folder = Path(args.folder)
     manifest, statements, groups = load_task(folder)
+
+    if manifest["comparison"] == "script":
+        count = validate_samples_with_check(folder, groups)
+        print(f"{CHECK_FILE} accepted {count} sample output(s)")
 
     solution = folder / "solution.py"
     if solution.exists():

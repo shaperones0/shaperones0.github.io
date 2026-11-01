@@ -370,6 +370,10 @@ button.primary.stop {
   -webkit-touch-callout: default;
 }
 
+.statement pre code {
+  font-size: inherit;
+}
+
 .statement :not(pre) > code {
   padding: 1px 4px;
   border-radius: 4px;
@@ -396,22 +400,100 @@ button.primary.stop {
   border: 1px solid var(--line);
 }
 
-.example {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  margin: 0.6em 0;
+.statement pre {
+  position: relative;
 }
 
-.example pre {
+.statement .tests-table {
+  width: 100%;
+  table-layout: fixed;
+  margin: 0.8em 0;
+  background: var(--surface);
+}
+
+.tests-table th {
+  padding: 3px 10px;
+  text-align: left;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--muted);
+  background: var(--surface-2);
+}
+
+.statement .tests-table td {
+  padding: 0;
+  vertical-align: top;
+}
+
+.statement .tests-table pre {
   margin: 0;
   min-height: 2.2em;
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
-.example-label {
+.statement .code-block {
+  display: flex;
+  gap: 1.2ch;
+  white-space: pre;
+  overflow-wrap: normal;
+}
+
+.code-block code {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.code-numbers {
+  flex: none;
+  text-align: right;
   color: var(--muted);
-  font-size: 13px;
-  margin-bottom: 2px;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.copy-button {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  min-height: 0;
+  padding: 0;
+  color: var(--muted);
+  background: var(--surface);
+  opacity: 0;
+  transition: opacity 0.15s;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.copy-button[data-copied="true"] {
+  color: var(--input);
+  opacity: 1;
+}
+
+pre:hover > .copy-button,
+.copy-button:focus-visible {
+  opacity: 1;
+}
+
+/* Touch screens can't hover, so the button is always there, just quieter. */
+@media (hover: none) {
+  .copy-button {
+    opacity: 0.7;
+  }
+}
+
+.katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 2px 0;
 }
 
 .test-group summary {

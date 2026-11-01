@@ -1,78 +1,43 @@
-import DOMPurify from "dompurify";
-import { Marked } from "marked";
-import { useEffect, useMemo, useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import { t } from "../i18n";
+import { showToast } from "../session";
 import { language } from "../settings";
 import { loadGroupTests } from "../tasks/check";
 import { localized, type Task, type TestCase } from "../tasks/package";
+import { renderStatement, testsTableWithButtons, type Labels, type RenderMath } from "./markdown";
 
-const IMAGE_TYPES: Record<string, string> = {
-  png: "image/png",
-  jpg: "image/jpeg",
-  jpeg: "image/jpeg",
-  gif: "image/gif",
-  webp: "image/webp",
-  svg: "image/svg+xml",
-};
+const COPIED_MS = 1500;
+const CHECK_ICON = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M6.2 11.6 2.6 8l-1.1 1.1 4.7 4.7 8.3-8.3-1.1-1.1z"/></svg>';
 
-const imageUrls = new WeakMap<Task, Map<string, string>>();
+const labels = (): Labels => ({ input: t("exampleInput"), output: t("exampleOutput"), copy: t("copy") });
 
-function imageUrl(task: Task, path: string) {
-  let urls = imageUrls.get(task);
-  if (!urls) imageUrls.set(task, (urls = new Map()));
-  const name = path.replace(/^\.\//, "");
-  if (!urls.has(name)) {
-    const bytes = task.assets.get(name);
-    const type = IMAGE_TYPES[name.split(".").pop()!.toLowerCase()];
-    if (!bytes || !type) return null;
-    urls.set(name, URL.createObjectURL(new Blob([bytes], { type })));
-  }
-  return urls.get(name)!;
-}
+let mathLoader: Promise<RenderMath> | null = null;
 
-const escapeHtml = (text: string) =>
-  text.replace(/[&<>"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[char]!);
-
-function exampleHtml(input: string, output: string) {
-  return `<div class="example">
-    <div><div class="example-label">${escapeHtml(t("exampleInput"))}</div><pre><code>${escapeHtml(input)}</code></pre></div>
-    <div><div class="example-label">${escapeHtml(t("exampleOutput"))}</div><pre><code>${escapeHtml(output)}</code></pre></div>
-  </div>`;
-}
-
-function renderMarkdown(task: Task, source: string) {
-  const marked = new Marked({
-    renderer: {
-      code({ text, lang }) {
-        if (lang?.trim() !== "test") return false;
-        const [input, output = ""] = text.split(/^---[ \t]*$/m);
-        return exampleHtml(input.replace(/\n$/, ""), output.replace(/^\n/, ""));
-      },
-    },
+// Null if it can't load, for example offline. Formulas then stay as plain text.
+function loadMath(): Promise<RenderMath | null> {
+  mathLoader ??= import("./math").then((module) => module.renderMath);
+  return mathLoader.catch(() => {
+    mathLoader = null;
+    return null;
   });
-  const clean = DOMPurify.sanitize(marked.parse(source, { async: false }), { RETURN_DOM_FRAGMENT: true });
+}
 
-  // Only images inside the package load, which also keeps a statement from calling out to anywhere.
-  for (const image of clean.querySelectorAll("img")) {
-    const url = imageUrl(task, image.getAttribute("src") ?? "");
-    if (url) {
-      image.src = url;
-      image.draggable = false;
-    } else {
-      image.remove();
-    }
+async function copyBlock(button: HTMLElement) {
+  const code = button.parentElement?.querySelector("code");
+  if (!code) return;
+  try {
+    await navigator.clipboard.writeText((code.textContent ?? "").replace(/\n$/, ""));
+  } catch {
+    showToast(t("copyFailed"));
+    return;
   }
-  for (const link of clean.querySelectorAll("a")) {
-    if (/^https?:/i.test(link.getAttribute("href") ?? "")) {
-      link.target = "_blank";
-      link.rel = "noopener noreferrer";
-    } else {
-      link.removeAttribute("href");
-    }
-  }
-  const holder = document.createElement("div");
-  holder.append(clean);
-  return holder.innerHTML;
+  const original = button.innerHTML;
+  button.dataset.copied = "true";
+  button.innerHTML = CHECK_ICON;
+  setTimeout(() => {
+    delete button.dataset.copied;
+    button.innerHTML = original;
+  }, COPIED_MS);
 }
 
 function ClosedExamples({ task }: { task: Task }) {
@@ -95,16 +60,14 @@ function ClosedExamples({ task }: { task: Task }) {
   return (
     <>
       {groups.map((group) => {
-        const examples = group.tests.map((test, index) => (
-          <div key={index} dangerouslySetInnerHTML={{ __html: exampleHtml(test.input, test.output ?? "") }} />
-        ));
+        const table = <div dangerouslySetInnerHTML={{ __html: testsTableWithButtons(group.tests, labels()) }} />;
         return group.collapsed ? (
           <details key={group.name} class="test-group">
             <summary>{t("moreTests", { count: group.tests.length })}</summary>
-            {examples}
+            {table}
           </details>
         ) : (
-          <div key={group.name} class="test-group">{examples}</div>
+          <div key={group.name} class="test-group">{table}</div>
         );
       })}
     </>
@@ -114,9 +77,26 @@ function ClosedExamples({ task }: { task: Task }) {
 export function Statement({ task }: { task: Task }) {
   const lang = language.value;
   const source = task.statements[lang] ?? task.statements.ru ?? task.statements.en ?? "";
-  const html = useMemo(() => renderMarkdown(task, source), [task, source, lang]);
+  const [html, setHtml] = useState("");
+
+  useEffect(() => {
+    let current = true;
+    (async () => {
+      const renderMath = source.includes("$") ? await loadMath() : null;
+      if (current) setHtml(renderStatement(task, source, labels(), renderMath));
+    })();
+    return () => {
+      current = false;
+    };
+  }, [task, source, lang]);
+
+  const onClick = (event: MouseEvent) => {
+    const button = (event.target as Element).closest<HTMLElement>(".copy-button");
+    if (button && !button.dataset.copied) copyBlock(button);
+  };
+
   return (
-    <article class="statement">
+    <article class="statement" onClick={onClick}>
       <h1>{localized(task.manifest.title, lang)}</h1>
       <div dangerouslySetInnerHTML={{ __html: html }} />
       <ClosedExamples task={task} />

@@ -7,9 +7,23 @@ import type { Display, Task, TestCase, TestGroup } from "./package";
 import { normalize, outputHash, outputsMatch, unseal } from "./protect";
 
 const MAX_OUTPUT_CHARS = 16 * 1024 * 1024;
+const CHECK_SCRIPT_LIMIT_MS = 10_000;
+const CHECK_RUNNER_FILE = "__check_runner__.py";
+// Prints a check's verdict as the last line of output. Same steps as CHECK_RUNNER in pytask.py.
+const CHECK_RUNNER = `
+import contextlib, inspect, io, json, sys
+data = json.load(sys.stdin)
+with contextlib.redirect_stdout(io.StringIO()):
+    import check
+    if len(inspect.signature(check.check).parameters) >= 2:
+        result = check.check(data["output"], data["input"])
+    else:
+        result = check.check(data["output"])
+print("1" if result else "0")
+`;
 const encoder = new TextEncoder();
 
-export type Verdict = "passed" | "wrong" | "error" | "timeout" | "crash" | "too-much-output";
+export type Verdict = "passed" | "wrong" | "error" | "timeout" | "crash" | "too-much-output" | "check-failed";
 
 export interface TestResult {
   group: string;
@@ -86,6 +100,53 @@ function runOnce(
     });
 }
 
+// Runs the task's check script. It gets its own interpreter, which never runs student code,
+// so a program can't reach the script, and the program's output is only ever data to it.
+class CheckScript {
+  private interpreter: Interpreter | null = null;
+
+  constructor(private source: string) {}
+
+  // Null means the script itself failed, which isn't the student's fault.
+  async accepts(output: string, input: string): Promise<boolean | null> {
+    this.interpreter ??= takeInterpreter();
+    const current = this.interpreter;
+    let stdout = "";
+    let stderr = "";
+    let timer = 0;
+    const result = await current.start(
+      {
+        entry: CHECK_RUNNER_FILE,
+        files: { [CHECK_RUNNER_FILE]: CHECK_RUNNER, "check.py": this.source },
+        stdin: encoder.encode(JSON.stringify({ output, input })) as Uint8Array<ArrayBuffer>,
+      },
+      {
+        onOutput(text, stream) {
+          if (stream === STREAM_STDERR) stderr += text;
+          else stdout += text;
+        },
+        onInputRequest() {},
+        onStarted() {
+          timer = window.setTimeout(() => current.kill(), CHECK_SCRIPT_LIMIT_MS);
+        },
+      },
+    );
+    clearTimeout(timer);
+    if (current.isDead) this.interpreter = null;
+    const verdict = stdout.trim().split("\n").pop();
+    if (result.kind !== "exit" || result.status !== 0 || (verdict !== "0" && verdict !== "1")) {
+      console.error("Check script failed:", stderr);
+      return null;
+    }
+    return verdict === "1";
+  }
+
+  dispose() {
+    this.interpreter?.kill();
+    this.interpreter = null;
+  }
+}
+
 async function outputIsCorrect(task: Task, position: string, test: TestCase, attempt: Attempt, produced: Record<string, string | null>) {
   const { id, comparison, tolerance } = task.manifest;
   const matches = async (actual: string, expected: string | undefined, hash: string | undefined, where: string) => {
@@ -103,11 +164,12 @@ async function outputIsCorrect(task: Task, position: string, test: TestCase, att
   return true;
 }
 
-function verdictOf(attempt: Attempt, correct: boolean): Verdict {
+function verdictOf(attempt: Attempt, correct: boolean | null): Verdict {
   const { result } = attempt;
   if (result.kind === "timeout" || result.kind === "too-much-output") return result.kind;
   if (result.kind === "crash" || result.kind === "killed") return "crash";
   if (result.status !== 0) return "error";
+  if (correct === null) return "check-failed";
   return correct ? "passed" : "wrong";
 }
 
@@ -131,8 +193,21 @@ export function runChecks(
 ): CheckHandle {
   let cancelled = false;
   let interpreter: Interpreter | null = null;
+  let checkScript: CheckScript | null = null;
+
+  const isCorrect = async (attempt: Attempt, position: string, test: TestCase) => {
+    const { result } = attempt;
+    if (result.kind !== "exit" || result.status !== 0) return false;
+    if (checkScript) return checkScript.accepts(attempt.stdout, test.input);
+    return outputIsCorrect(task, position, test, attempt, result.files ?? {});
+  };
 
   const work = async (): Promise<CheckProgress | null> => {
+    if (task.manifest.comparison === "script") {
+      if (!task.sealedCheck) throw new Error("package has no check script");
+      const { source } = await unseal<{ source: string }>(task.manifest.id, "check", task.sealedCheck);
+      checkScript = new CheckScript(source);
+    }
     const loaded = await Promise.all(task.groups.map((_, index) => loadGroupTests(task, index)));
     const total = loaded.reduce((sum, tests) => sum + tests.length, 0);
     const results: TestResult[] = [];
@@ -148,8 +223,8 @@ export function runChecks(
         const current = interpreter;
         const attempt = await runOnce(current, files, entry, test, task.manifest.timeLimit * 1000);
         if (cancelled) return null;
-        const produced = attempt.result.kind === "exit" ? attempt.result.files ?? {} : {};
-        const correct = await outputIsCorrect(task, `${groupIndex}.${testIndex}`, test, attempt, produced);
+        const correct = await isCorrect(attempt, `${groupIndex}.${testIndex}`, test);
+        if (cancelled) return null;
         const verdict = verdictOf(attempt, correct);
         results.push({
           group: group.name,
@@ -163,6 +238,7 @@ export function runChecks(
       }
     }
     interpreter?.dispose();
+    checkScript?.dispose();
     return { done: total, total, results };
   };
 
@@ -170,6 +246,7 @@ export function runChecks(
     cancel() {
       cancelled = true;
       interpreter?.kill();
+      checkScript?.dispose();
     },
     finished: work(),
   };

@@ -1,0 +1,9 @@
+id = "check-task"
+version = 1
+title = "Любой делитель"
+comparison = "script"
+
+[[group]]
+name = "hidden"
+display = "hidden"
+protection = "obfuscated"
