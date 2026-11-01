@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content">
+  <meta name="robots" content="noindex">
+  <meta name="color-scheme" content="light dark">
+  <title>Python IDE</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%232b5b84'/><path d='M9 11l6 5-6 5M17 22h7' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/></svg>">
+  <script src="../coi.js"></script>
+  <script>
+    // Applied before first paint, so a saved theme never flashes the wrong colors.
+    try {
+      const theme = localStorage.getItem("ide-theme");
+      if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
+      if (localStorage.getItem("ide-lang") === "en") document.documentElement.lang = "en";
+    } catch {}
+  </script>
+</head>
+<body>
+  <div id="app"></div>
+  <script type="module" src="/src/level1.tsx"></script>
+</body>
+</html>
