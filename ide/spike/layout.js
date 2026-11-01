@@ -1,5 +1,5 @@
 // Shared memory layout used by both the page and the worker.
-export const CTRL = { STDIN_STATE: 0, STDIN_LEN: 1, OUT_HEAD: 2, OUT_TAIL: 3, SLEEP: 4 };
+export const CTRL = { STDIN_STATE: 0, STDIN_LEN: 1, OUT_HEAD: 2, OUT_TAIL: 3, SLEEP: 4, HEAP_MB: 5 };
 export const STDIN_EMPTY = 0;
 export const STDIN_DATA = 1;
 export const STDIN_EOF = 2;

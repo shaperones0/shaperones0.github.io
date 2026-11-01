@@ -66,9 +66,10 @@ async function recoveryProbe() {
 
 async function crashTest(code) {
   const result = await run(code);
+  const heapMb = result.handle.heapMb;
   const recovery = await recoveryProbe();
   const how = result.kind === "exit" ? result.err.trim().split("\n").pop() || result.out.trim() : `${result.kind}: ${result.message ?? ""}`;
-  return { pass: recovery.startsWith("next run OK"), detail: `${how.slice(0, 160)}; ${recovery}` };
+  return { pass: recovery.startsWith("next run OK"), detail: `${how.slice(0, 160)}; heap ${heapMb} MB; ${recovery}` };
 }
 
 export const TESTS = [

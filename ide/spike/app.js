@@ -1,8 +1,8 @@
-import { Run } from "./runner.js";
+import { HEAP_LIMIT_MB, Run } from "./runner.js";
 import { TESTS } from "./tests.js";
 
 const $ = (id) => document.getElementById(id);
-const CURRENT_TEST_KEY = "spike-current-test";
+const PROGRESS_KEY = "spike-progress";
 const report = { environment: {}, storage: {}, tests: [] };
 
 function renderEnvironment() {
@@ -16,6 +16,8 @@ function renderEnvironment() {
     deviceMemoryGb: navigator.deviceMemory ?? "unknown",
     coarsePointer: matchMedia("(pointer: coarse)").matches,
     viewport: `${innerWidth}x${innerHeight}`,
+    spikeVersion: 2,
+    heapLimitMb: HEAP_LIMIT_MB,
   };
   renderReport();
 }
@@ -67,36 +69,64 @@ async function checkStorage() {
   renderReport();
 }
 
-async function runTests() {
-  const button = $("run-tests");
-  button.disabled = true;
+function saveProgress(running = null) {
+  try {
+    localStorage.setItem(PROGRESS_KEY, JSON.stringify({ tests: report.tests, running, heapMb: running ? Run.latest?.heapMb ?? 0 : 0 }));
+  } catch {}
+}
+
+function renderResults() {
   const list = $("results");
   list.replaceChildren();
-  report.tests = [];
-  window.spikeDone = false;
-
-  for (const [name, test] of TESTS) {
+  for (const test of report.tests) {
     const row = list.appendChild(document.createElement("li"));
+    row.className = test.pass ? "pass" : "fail";
+    row.textContent = `${test.pass ? "PASS" : "FAIL"}  ${test.name} (${test.detail})`;
+  }
+  const failed = report.tests.filter((test) => !test.pass).length;
+  $("summary").textContent = `${report.tests.length - failed} passed, ${failed} failed, ${TESTS.length - report.tests.length} not run`;
+  $("continue-tests").hidden = report.tests.length === 0 || report.tests.length >= TESTS.length;
+  renderReport();
+}
+
+async function runTests({ fresh }) {
+  $("run-tests").disabled = $("continue-tests").disabled = true;
+  if (fresh) report.tests = [];
+  window.spikeDone = false;
+  renderResults();
+
+  for (const [name, test] of TESTS.slice(report.tests.length)) {
+    const row = $("results").appendChild(document.createElement("li"));
     row.textContent = `… ${name}`;
-    // If the browser kills the tab here, the next load can say which test did it.
-    try { localStorage.setItem(CURRENT_TEST_KEY, name); } catch {}
+    // Recorded before and during the test, so a killed tab still says what it was doing.
+    saveProgress(name);
+    const heartbeat = setInterval(() => saveProgress(name), 250);
     let result;
     try {
       result = await test();
     } catch (error) {
       result = { pass: false, detail: `threw: ${error}` };
     }
-    row.className = result.pass ? "pass" : "fail";
-    row.textContent = `${result.pass ? "PASS" : "FAIL"}  ${name} (${result.detail})`;
+    clearInterval(heartbeat);
     report.tests.push({ name, ...result });
-    renderReport();
+    saveProgress();
+    renderResults();
   }
-  try { localStorage.removeItem(CURRENT_TEST_KEY); } catch {}
-  const failed = report.tests.filter((test) => !test.pass).length;
-  $("summary").textContent = `${report.tests.length - failed} passed, ${failed} failed`;
-  button.disabled = false;
+  $("run-tests").disabled = $("continue-tests").disabled = false;
   window.spikeReport = report;
   window.spikeDone = true;
+}
+
+function restoreProgress() {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(PROGRESS_KEY)); } catch {}
+  if (!saved) return;
+  report.tests = saved.tests ?? [];
+  if (saved.running) {
+    report.tests.push({ name: saved.running, pass: false, detail: `PAGE LOST during this test; last heap reading ${saved.heapMb} MB` });
+    saveProgress();
+  }
+  renderResults();
 }
 
 // Manual console, for checking typing and input styling on real devices.
@@ -179,16 +209,10 @@ function init() {
   renderEnvironment();
   checkStorage();
 
-  let dead = null;
-  try { dead = localStorage.getItem(CURRENT_TEST_KEY); } catch {}
-  if (dead) {
-    report.previousRunDiedDuring = dead;
-    $("summary").textContent = `The previous test run did not finish. The page was lost during: ${dead}`;
-    renderReport();
-    try { localStorage.removeItem(CURRENT_TEST_KEY); } catch {}
-  }
+  restoreProgress();
 
-  $("run-tests").onclick = runTests;
+  $("run-tests").onclick = () => runTests({ fresh: true });
+  $("continue-tests").onclick = () => runTests({ fresh: false });
   $("run").onclick = startProgram;
   $("stop").onclick = stopProgram;
   $("eof").onclick = sendEof;
@@ -196,7 +220,7 @@ function init() {
   $("copy").onclick = copyReport;
 
   const ready = window.crossOriginIsolated;
-  $("run-tests").disabled = !ready;
+  $("run-tests").disabled = $("continue-tests").disabled = !ready;
   $("run").disabled = !ready;
   window.spikeReady = ready;
 }

@@ -37,6 +37,19 @@ _run()
 
 let pyodide, ctrl, ringBytes, stdinBytes;
 
+// The build allows a 4 GB heap, and a phone's OS kills the tab long before that. Emscripten
+// treats a failed grow as out of memory, so going over the limit becomes a MemoryError.
+function limitHeap(limitMb) {
+  const grow = WebAssembly.Memory.prototype.grow;
+  WebAssembly.Memory.prototype.grow = function (pages) {
+    const size = this.buffer.byteLength + pages * 65536;
+    if (size > limitMb * 1024 * 1024) throw new RangeError("heap limit reached");
+    const previous = grow.call(this, pages);
+    Atomics.store(ctrl, CTRL.HEAP_MB, Math.round(size / (1024 * 1024)));
+    return previous;
+  };
+}
+
 function writeFrame(stream, bytes) {
   for (let offset = 0; offset < bytes.length; ) {
     const count = Math.min(bytes.length - offset, RING_SIZE / 2);
@@ -98,11 +111,12 @@ function listFiles() {
   return files;
 }
 
-onmessage = async ({ data: { code, stdin, shared } }) => {
+onmessage = async ({ data: { code, stdin, shared, heapLimitMb } }) => {
   const started = performance.now();
   ctrl = new Int32Array(shared.ctrl);
   ringBytes = new Uint8Array(shared.ring);
   stdinBytes = new Uint8Array(shared.stdin);
+  limitHeap(heapLimitMb);
 
   try {
     pyodide = await loadPyodide({ indexURL: new URL("../pyodide/314.0.7/", import.meta.url).href });

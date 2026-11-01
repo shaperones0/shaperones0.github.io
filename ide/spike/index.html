@@ -25,12 +25,15 @@
   </style>
 </head>
 <body>
-  <h1>IDE technical spike</h1>
+  <h1>IDE technical spike <small>v2</small></h1>
   <p id="status"></p>
 
   <h2>1. Automatic tests</h2>
-  <p>Takes a minute or two. The last test deliberately exhausts memory, so a phone may reload this page; it will say so if that happens.</p>
-  <button id="run-tests" disabled>Run all tests</button>
+  <p>Takes a minute or two. Results are saved as it goes. If a test crashes the page, it reloads showing what was lost: press Continue to run the rest.</p>
+  <div class="row">
+    <button id="run-tests" disabled>Run all tests</button>
+    <button id="continue-tests" disabled hidden>Continue</button>
+  </div>
   <p id="summary"></p>
   <ol id="results"></ol>
 

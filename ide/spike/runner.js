@@ -4,6 +4,7 @@ import { CTRL, RING_SIZE, STDIN_SIZE, STDIN_DATA, STDIN_EOF, FRAME_HEADER } from
 const encoder = new TextEncoder();
 const STOP_RETRY_MS = 250;
 const STOP_KILL_MS = 1500;
+export const HEAP_LIMIT_MB = matchMedia("(pointer: coarse)").matches ? 512 : 2048;
 
 export class Run {
   // Callbacks: onOutput(text, stream), onInputRequest(), onReady(bootMs).
@@ -16,7 +17,7 @@ export class Run {
     this.settled = false;
 
     this.shared = {
-      ctrl: new SharedArrayBuffer(5 * 4),
+      ctrl: new SharedArrayBuffer(6 * 4),
       ring: new SharedArrayBuffer(RING_SIZE),
       stdin: new SharedArrayBuffer(STDIN_SIZE),
       interrupt: new SharedArrayBuffer(1),
@@ -34,8 +35,9 @@ export class Run {
       this.#finish({ kind: "crash", message: event.message ?? "worker error" });
     };
     this.drainTimer = setInterval(() => this.#drain(), 16);
+    Run.latest = this;
     const transfer = stdin ? [stdin.buffer] : [];
-    this.worker.postMessage({ code, stdin, shared: this.shared }, transfer);
+    this.worker.postMessage({ code, stdin, shared: this.shared, heapLimitMb: HEAP_LIMIT_MB }, transfer);
   }
 
   #onMessage(data) {
@@ -90,6 +92,10 @@ export class Run {
     this.waitingForInput = false;
     Atomics.store(this.ctrl, CTRL.STDIN_STATE, state);
     Atomics.notify(this.ctrl, CTRL.STDIN_STATE);
+  }
+
+  get heapMb() {
+    return Atomics.load(this.ctrl, CTRL.HEAP_MB);
   }
 
   interrupt() {
