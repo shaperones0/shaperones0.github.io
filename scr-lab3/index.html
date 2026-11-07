@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>Title</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+
+  <h1 id="title">Публикации</h1>
+
+  <button id="btn-load">Загрузить публикации</button>
+
+  <div id="div-pubs"></div>
+
+  <h3 id="title">Добавить</h3>
+
+  <div id="form-upload">
+    <table>
+      <tr>
+        <td>
+          Заголовок:
+        </td>
+        <td>
+          <input type="text" id="inp-title">
+        </td>
+      </tr>
+      <tr>
+        <td>
+          Текст:
+        </td>
+        <td>
+          <textarea id="inp-content" cols="135" rows="30"></textarea>
+        </td>
+      </tr>
+    </table>
+
+    <button id="inp-upload">Создать публикацию</button>
+    <div id="inp-errors"></div>
+  </div>
+
+  <pre><code id="logs">Сообщения:</code></pre>
+
+  <template id="tmp-pub" is="auto-binding">
+    <div>
+      <details open>
+        <summary class="pub-title"></summary>
+        <div class="pub-content"></div>
+
+      </details>
+    </div>
+  </template>
+
+  <script src="app.js" defer></script>
+
+</body>
+</html>
