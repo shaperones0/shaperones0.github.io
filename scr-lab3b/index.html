@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>Title</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+  <div id="content">
+    <h1>Пользователи</h1>
+
+    <a><button id="btn-load">Загрузить пользователей</button></a>
+    <input id="text-filter" type="text" placeholder="Поиск по имени">
+
+    <div id="div-users"></div>
+  </div>
+
+  <pre><code id="logs">Сообщения:</code></pre>
+
+  <template id="tmp-user">
+    <div>
+      <details closed>
+        <summary class="user-title"></summary>
+        <div class="user-content"></div>
+      </details>
+    </div>
+  </template>
+
+  <template id="tmp-pub">
+    <div>
+      <details open>
+        <summary class="pub-title"></summary>
+        <div class="pub-content"></div>
+      </details>
+    </div>
+  </template>
+
+  <script src="app.js" defer></script>
+
+</body>
+</html>
